@@ -1,0 +1,342 @@
+---
+title: "HW2_Solution"
+author: "Roy Miron & Bar Golikov"
+date: "10 באפריל 2017"
+output: html_document
+---
+
+## Setup
+
+1. Set the working directory:
+
+```{r setup}
+knitr::opts_knit$set(root.dir = 'C:/Users/Roy/Desktop/Titanic')
+getwd()
+
+```
+
+
+2. Read data from csv files (treat empty strings as NA's):
+
+```{r}
+df = read.csv('C:/Users/Roy/Desktop/Titanic/train.csv',na.strings = "")
+
+```
+
+
+## Preprocessing - Data Cleanning + Data Enhancing
+
+3. Convert the numeric features 'Survived' and 'Pclass' into factors features:
+
+```{r}
+df$Survived = as.factor(df$Survived)
+df$Pclass = as.factor(df$Pclass)
+```
+
+
+4. Some features like 'PassengerId' and 'Ticket' represent unique values so they won't help us to predict if the passenger survived
+   or not - lets drop both columns to make our dataframe smaller and more informative:
+
+```{r}
+df = df[,-c(1,9)]
+
+```
+
+
+5. The 'Name' feature won't helps us to predict if the passenger survived but we can extract the title and the lastname
+   (later for family size feature) from each name and use the new feature 'Title' to help us get a better prediction:
+   
+```{r}
+n = dim(df)[1]
+title = rep(NA,n)
+#surname = rep(NA,n)
+for (i in 1:n){
+  #new_surname = strsplit(as.character(df$Name[i]),",",fixed=TRUE)[[1]][1]
+  splited_name = strsplit(as.character(df$Name[i]),",",fixed=TRUE)[[1]][2]
+  new_title = strsplit(splited_name,".",fixed=TRUE)[[1]][1]
+  title[i] = trimws(new_title)
+  #surname[i] = trimws(new_surname)
+}
+table(title)
+
+```
+
+
+6. As we can see there are some common titles (Mr, Mrs, Miss) but most of the titles are very rare so let's join them together:
+
+```{r}
+title[title != 'Mr' & title != 'Miss' & title != 'Mrs' & title != 'Master'] = 'Rare'
+table(title)
+
+```
+
+
+7. Now we can remove the 'Name' column and replace it with our new 'Title' feature:
+
+```{r}
+df = df[,-c(3)]
+df$Title = as.factor(title)
+
+```
+
+
+8. 'Cabin' feature have 147 levels and many NA values so this feature isn't helping us much in the prediction process.
+   instead of using the 'Cabin' feature (since some passengers have more then one cabin) we will convert it to Cabin_Count feature
+   that will represent the number of cabins that the passenger stayed in:
+   
+```{r}
+n = dim(df)[1]
+cabin_count = rep(0,n)
+for(i in 1:n){
+  if(!is.na(df$Cabin[i]))
+  {
+    temp = strsplit(as.character(df$Cabin[i])," ",fixed=TRUE)
+    cabin_count[i] = length(temp[[1]])
+  }
+}
+table(cabin_count)
+
+```
+
+
+9. Now we can remove the 'Cabin' column and replace it with our new Cabin_count feature:
+
+```{r}
+df = df[,-c(8)]
+df$Cabin_count = as.factor(cabin_count)
+
+```
+
+
+10. Now we will add a family_size feature (based on SibSp and Parch) and discretize into 3 groups in order to get a better prediction:
+
+```{r}
+df$Family_size_temp = df$SibSp + df$Parch + 1
+
+df$Family_size[df$Family_size_temp == 1] = 'singleton'
+df$Family_size[df$Family_size_temp < 5 & df$Family_size_temp > 1] = 'small'
+df$Family_size[df$Family_size_temp > 4] = 'large'
+# remove the temporary column, SibSp and Parch
+df = df[,-c(5,6,11)]
+df$Family_size = as.factor(df$Family_size)
+
+```
+
+
+## Visuallize our data
+
+1. let's plot histograms for the factor features (each feature in his own plot) to get some idea how much the feature is relevant for          predicting if the passenger survived: 
+
+```{r}
+#install.packages("ggplot2")
+#install.packages("gridExtra")
+library(ggplot2)
+library(gridExtra)
+plot1 = ggplot(data=df, aes(x=Title)) + geom_bar(aes(fill=Survived)) + ggtitle("Title ~ Survived")
+plot2 = ggplot(data=df, aes(x=Cabin_count)) + geom_bar(aes(fill=Survived)) + ggtitle("Cabin_count ~ Survived")
+plot3 = ggplot(data=df, aes(x=Embarked)) + geom_bar(aes(fill=Survived)) + ggtitle("Embarked ~ Survived")
+plot4 = ggplot(data=df, aes(x=Sex)) + geom_bar(aes(fill=Survived)) + ggtitle("Sex ~ Survived")
+plot5 = ggplot(data=df, aes(x=Pclass)) + geom_bar(aes(fill=Survived)) + ggtitle("Pclass ~ Survived")
+plot6 = ggplot(data=df, aes(x=Family_size)) + geom_bar(aes(fill=Survived)) + ggtitle("Family_size ~ Survived")
+grid.arrange(plot1, plot2, plot3, plot4, plot5, plot6, ncol=2)
+
+```
+
+
+2. Now let's plot histograms for the non-factor features (each feature in his own plot) to get some idea how much the feature is               relevant for predicting if the passenger survived (since this features are continues like age we used different bins width):
+
+```{r}
+plot1 = ggplot(data=na.omit(df),aes(x=Age)) +geom_histogram(aes(fill=Survived),stat="bin",binwidth=10) +ggtitle("Age ~ Survived")
+plot2 = ggplot(data=df,aes(x=Fare)) +geom_histogram(aes(fill=Survived),stat="bin",binwidth=50) +ggtitle("Fare ~ Survived")
+grid.arrange(plot1,plot2,ncol=2)
+
+```
+
+
+## Modeling The Data
+
+1. First we need to split our dataframe into train (75%) and test (25%) dataframes in order to evaluate our model accuracy:
+
+```{r}
+indices = sample(1:nrow(df),nrow(df)*0.75)
+train = df[indices,]
+test = df[-indices,]
+#remove the class column from the test set and save it for later usage
+test_survived = test$Survived
+test = test[,-c(1)]
+
+```
+
+
+### First model - C5.0
+
+2. Let's start with a basic C5.0 decision tree and try to predict the test set:
+
+```{r}
+#install.packages("C50")
+library(C50)
+set.seed(123)
+C50_model = C5.0(Survived ~., data=train)
+c50_pred = predict(C50_model,test)
+print("Tree mean:")
+mean(c50_pred==test_survived)
+
+```
+
+
+3. Visuallize our C5.0 tree:
+
+```{r}
+plot(C50_model)
+
+```
+
+
+### Second model - rpart decision tree
+
+4. Decision tree model with rpart - first we build the tree then we choose the best 'CP' based on the minimal 'XError' and then we train
+   the model again with the best 'CP' value and compare the results:
+
+```{r}
+#install.packages("rpart")
+library(rpart)
+set.seed(123)
+rpart_model = rpart(Survived ~ .,data = train)
+rpart_pred = predict(rpart_model, newdata = test, type = "class")
+print("Tree mean before prune:")
+first_mean = mean(rpart_pred==test_survived)
+print(first_mean)
+bestcp = rpart_model$cptable[which.min(rpart_model$cptable[,"xerror"]),"CP"]
+rpart_model_pruned = prune(rpart_model, cp = bestcp)
+rpart_pruned_pred = predict(rpart_model_pruned, newdata = test, type = "class")
+print("Tree mean after prune:")
+second_mean = mean(rpart_pruned_pred==test_survived)
+print(second_mean)
+#choose the best tree
+if(second_mean > first_mean)
+{
+    rpart_model = rpart_model_pruned
+}
+
+#res = cbind(PassengerId=ids,Survived=as.character(rpart_prediction))
+#write.csv(res,file="C:/Users/Roy/Desktop/Titanic/rpart.csv",row.names = F)
+
+```
+
+
+5. We can visuallize our tree using the rpart.plot package:
+
+```{r}
+#install.packages("rpart.plot")
+library(rpart.plot)
+prp(rpart_model, faclen = 0, cex = 0.8, extra = 1)
+
+```
+
+
+### Third model - Random Forest using caret
+
+6. Let's see if we can improve our predictions using a Random Forest model - first we need to handle our missing values:
+
+```{r}
+# install.packages("caret")
+library(caret)
+library(randomForest)
+set.seed(123)
+# handle missing values in the train set
+train$Age[is.na(train$Age)] <- -1
+train$Fare[is.na(train$Fare)] <- median(train$Fare, na.rm=TRUE)
+train$Embarked[is.na(train$Embarked)] = "S"
+# handle missing values in the test set
+test$Age[is.na(test$Age)] <- -1
+test$Fare[is.na(test$Fare)] <- median(test$Fare, na.rm=TRUE)
+test$Embarked[is.na(test$Embarked)] = "S"
+
+rf_model = randomForest(Survived ~ ., data = train, ntree=120, importance=TRUE)
+rf_pred = predict(rf_model, newdata = test, type = "class")
+print("Random Forest mean:")
+mean(rf_pred==test_survived)
+
+```
+
+
+## Predict survival based on our 3 models
+
+1. Load the test file and do the same data cleaning and data enchancing in order to convert the test to the same stracture as the train:
+
+```{r}
+set_to_predict = read.csv('C:/Users/Roy/Desktop/Titanic/test.csv',na.strings = "")
+ids = set_to_predict$PassengerId
+# convert 'Pclass' feature to factor
+set_to_predict$Pclass = as.factor(set_to_predict$Pclass)
+# extract the title from the 'Name' column
+n = dim(set_to_predict)[1]
+title = rep(NA,n)
+for (i in 1:n){
+  splited_name = strsplit(as.character(set_to_predict$Name[i]),",",fixed=TRUE)[[1]][2]
+  new_title = strsplit(splited_name,".",fixed=TRUE)[[1]][1]
+  title[i] = trimws(new_title)
+}
+# union rare values into one value called 'Rare'
+title[title != 'Mr' & title != 'Miss' & title != 'Mrs' & title != 'Master'] = 'Rare'
+set_to_predict = set_to_predict[,-c(3)]
+set_to_predict$Title = as.factor(title)
+# convert 'Cabin' feature into Cabin_count feature
+cabin_count = rep(0,n)
+for(j in 1:n){
+  if(!is.na(set_to_predict$Cabin[j]))
+  {
+    temp = strsplit(as.character(set_to_predict$Cabin[j])," ",fixed=TRUE)
+    cabin_count[j] = length(temp[[1]])
+  } 
+}
+set_to_predict = set_to_predict[,-c(9)]
+set_to_predict$Cabin_count = as.factor(cabin_count)
+# family size
+set_to_predict$Family_size_temp = set_to_predict$SibSp + set_to_predict$Parch + 1
+set_to_predict$Family_size[set_to_predict$Family_size_temp == 1] = 'singleton'
+set_to_predict$Family_size[set_to_predict$Family_size_temp < 5 & set_to_predict$Family_size_temp > 1] = 'small'
+set_to_predict$Family_size[set_to_predict$Family_size_temp > 4] = 'large'
+# remove columns
+set_to_predict = set_to_predict[,-c(1,5,6,7,12)]
+set_to_predict$Family_size = as.factor(set_to_predict$Family_size)
+
+```
+
+
+2. Here we trained the 3 models again based on all of our data and not only 75% to get a better model:
+
+```{r}
+C50_model = C5.0(Survived ~., data=df)
+rpart_model = rpart(Survived ~ .,data=df)
+# handle missing values
+df$Age[is.na(df$Age)] <- -1
+df$Fare[is.na(df$Fare)] <- median(df$Fare, na.rm=TRUE)
+df$Embarked[is.na(df$Embarked)] = "S"
+rf_model = randomForest(Survived ~ ., data=df, ntree=1000, importance=TRUE)
+
+```
+
+
+3. Now our test set has the same stracture as the train set and we can predict using our models:
+
+```{r}
+# C5.0
+c50_pred = predict(C50_model,set_to_predict)
+res1 = cbind(PassengerId=ids,Survived=as.character(c50_pred))
+write.csv(res1,file="C:/Users/Roy/Desktop/Titanic/c50.csv",row.names = F)
+# rpart
+rpart_pred = predict(rpart_model, newdata = set_to_predict, type = "class")
+res2 = cbind(PassengerId=ids,Survived=as.character(rpart_pred))
+write.csv(res2,file="C:/Users/Roy/Desktop/Titanic/rpart.csv",row.names = F)
+# Random forest
+rf_pred = predict(rf_model, newdata = set_to_predict)
+# in case the rf return NA we assume he didn't survive
+rf_pred[is.na(rf_pred)] = 0
+res3 = cbind(PassengerId=ids,Survived=as.character(rf_pred))
+write.csv(res3,file="C:/Users/Roy/Desktop/Titanic/rf.csv",row.names = F)
+
+```
+
+
+
