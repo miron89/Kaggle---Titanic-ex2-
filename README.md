@@ -1,5 +1,6 @@
 # Kaggle-Titanic: Machine Learning from Disaster
-The repository contains all the relevant files for ex2 (Kaggle - Titanic: Machine Learning from Disaster)
+
+Kaggle username: **Roy Miron**
 
 Repository include the following files:
 1. HW2_Solution.Rmd (markup R file)
